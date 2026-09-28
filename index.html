@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- O código da cotação vai depois do "#": nunca aparece em log nem em Referer. -->
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#1d1d1b">
+<title>Cotação — Spazio Gourmet</title>
+<meta property="og:type" content="website">
+<meta property="og:title" content="Cotação — Spazio Gourmet">
+<meta property="og:description" content="Responda a cotação pelo link, sem cadastro.">
+<meta property="og:image" content="https://spaziogourmet.github.io/cotacao/previa.jpg">
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+<header class="topo">
+  <img id="logo" class="logo" alt="Spazio Gourmet" width="80" height="60" hidden>
+  <div class="topo-textos">
+    <p class="titulo" id="titulo">Spazio Gourmet · Cotação</p>
+    <p class="subtitulo" id="subtitulo" hidden></p>
+  </div>
+</header>
+
+<div class="fixo" id="fixo">
+  <p class="faixa-cotacao" id="faixa-cotacao" hidden>COTAÇÃO — ainda não é pedido. O Ivan confirma o pedido pelo WhatsApp.</p>
+  <p class="faixa-previa" id="faixa-previa" hidden>Prévia — nada é enviado.</p>
+  <button type="button" class="faixa-pendente" id="faixa-pendente" hidden>AINDA NÃO ENVIADO — toque para tentar de novo</button>
+</div>
+
+<main class="conteudo" id="conteudo">
+  <p class="carregando">Carregando a cotação…</p>
+  <p class="dica">Se não funcionar, responda pelo WhatsApp com o número do item e o preço.</p>
+  <noscript><p class="dica">Este navegador não abriu a página. Responda pelo WhatsApp com o número do item e o preço.</p></noscript>
+</main>
+
+<footer class="rodape" id="rodape" hidden>
+  <div class="rodape-dentro">
+    <p class="mensagem" id="mensagem" role="alert" hidden></p>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+    <p class="pronto" id="pronto" hidden><a id="avisar-ivan" target="_blank" rel="noopener noreferrer">Pronto! Se quiser, avise o Ivan no WhatsApp</a></p>
+    <button type="button" class="botao-enviar" id="enviar">ENVIAR</button>
+  </div>
+</footer>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
