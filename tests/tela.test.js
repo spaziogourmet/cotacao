@@ -1364,7 +1364,8 @@ describe('o dia virou com a aba aberta (chegou seg à tarde, termina ter de manh
   const rotulosValidade = (p) => Array.from(p.doc.querySelectorAll('[aria-labelledby="gerais-val-rotulo"] .opcao')).map((b) => b.textContent);
   const primeiroBotaoValidade = (p) => p.doc.querySelector('[aria-labelledby="gerais-val-rotulo"] .opcao');
   const aberturas = (s) => s.chamadas.filter((c) => c.nome === 'cotacao_abrir').length;
-  const erroGerais = (p) => p.doc.querySelector('#gerais .erro-item');
+  // os erros das condições ficam junto de cada campo (a validade logo abaixo das datas): só os que estão à vista
+  const errosGerais = (p) => Array.from(p.doc.querySelectorAll('#gerais .erro-item')).filter((n) => !n.hidden).map((n) => n.textContent);
   const ligado = (p, x) => id(p, x).getAttribute('aria-pressed') === 'true';
   const PASSOU = 'A data de validade já passou; escolha de novo.';
 
@@ -1394,14 +1395,17 @@ describe('o dia virou com a aba aberta (chegou seg à tarde, termina ter de manh
     assert.equal(texto(p, 'prazo'), 'Responder até terça, 20/10, 12h');
     assert.ok(ligado(p, 'gerais-val-outra'), 'a data de ontem aparece em "outra data"');
     assert.equal(id(p, 'gerais-val-data').value, '2026-10-19');
-    assert.equal(erroGerais(p).textContent, PASSOU);
-    assert.equal(texto(p, 'mensagem'), 'Falta completar as condições.');
+    assert.deepEqual(errosGerais(p), [PASSOU]);
+    assert.equal(texto(p, 'gerais-erro-validade'), PASSOU, 'junto das datas');
+    assert.equal(visivel(p, 'mensagem'), false);
+    assert.equal(texto(p, 'completar'), 'A data de validade já passou — toque aqui para escolher de novo');
     assert.ok(ligado(p, 'gerais-pag-pix'), 'Pix continua');
     assert.equal(id(p, 'gerais-frete').value, '0');
     assert.equal(texto(p, 'gerais-situacao'), 'Ainda não enviado');
 
     primeiroBotaoValidade(p).click();   // agora é "hoje 20/10"
-    assert.equal(erroGerais(p).hidden, true);
+    assert.deepEqual(errosGerais(p), []);
+    assert.equal(visivel(p, 'completar'), false);
     await p.C.enviar();
     const c = s.ultimoEnvio().p_gerais;
     assert.equal(c.validade, '2026-10-20');
@@ -1476,8 +1480,10 @@ describe('o dia virou com a aba aberta (chegou seg à tarde, termina ter de manh
     assert.equal(c.p_gerais, null, 'as condições com a data de ontem ficam na tela');
     assert.deepEqual(c.p_itens.map((x) => x.numero), [2]);
     assert.deepEqual(rotulosValidade(p), DA_TERCA);
-    assert.equal(erroGerais(p).textContent, PASSOU);
-    assert.equal(texto(p, 'mensagem'), 'Falta completar as condições.');
+    assert.deepEqual(errosGerais(p), [PASSOU]);
+    assert.equal(visivel(p, 'mensagem'), false);
+    assert.equal(texto(p, 'completar'), 'Preços enviados. A data de validade já passou — toque aqui para escolher de novo');
+    assert.equal(visivel(p, 'faixa-pendente'), false, 'o preço chegou; falta só escolher a data');
     assert.equal(texto(p, 'gerais-situacao'), 'Ainda não enviado');
   });
 
@@ -1492,7 +1498,7 @@ describe('o dia virou com a aba aberta (chegou seg à tarde, termina ter de manh
     assert.equal(aberturas(s), 1);
     assert.deepEqual(rotulosValidade(p), DA_TERCA);
     assert.equal(id(p, 'item-2-preco').value, '3');
-    assert.equal(erroGerais(p).hidden, true, 'nada escolhido, nada a avisar');
+    assert.deepEqual(errosGerais(p), [], 'nada escolhido, nada a avisar');
   });
 
   test('o banco recusa as condições porque o dia virou durante o envio: a tela diz que a validade passou (não o texto genérico)', async () => {
@@ -1509,7 +1515,8 @@ describe('o dia virou com a aba aberta (chegou seg à tarde, termina ter de manh
     clicar(p, 'gerais-val-2026-10-19');
     await p.C.enviar();
     assert.equal(s.ultimoEnvio().p_gerais.validade, '2026-10-19', 'às 23h59 a data ainda era de hoje');
-    assert.equal(erroGerais(p).textContent, PASSOU);
+    assert.deepEqual(errosGerais(p), [PASSOU]);
+    assert.equal(texto(p, 'gerais-erro-validade'), PASSOU, 'junto das datas');
     assert.deepEqual(rotulosValidade(p), DA_TERCA, 'as datas já são as de terça');
     assert.equal(texto(p, 'gerais-situacao'), 'Ainda não enviado');
   });
@@ -1522,7 +1529,8 @@ describe('o dia virou com a aba aberta (chegou seg à tarde, termina ter de manh
     const p = await abrir({ servidor: s, relogio: { agora: AGORA } });
     clicar(p, 'gerais-val-2026-10-19');
     await p.C.enviar();
-    assert.equal(erroGerais(p).textContent, 'Algum valor das condições está fora do esperado. Confira.');
+    assert.deepEqual(errosGerais(p), ['Algum valor das condições está fora do esperado. Confira.']);
+    assert.equal(texto(p, 'gerais-erro'), 'Algum valor das condições está fora do esperado. Confira.');
   });
 
   test('aba fechada à noite e link aberto de novo de manhã: a validade de ontem do rascunho aparece em "outra data" com o aviso', async () => {
@@ -1537,7 +1545,8 @@ describe('o dia virou com a aba aberta (chegou seg à tarde, termina ter de manh
     assert.deepEqual(rotulosValidade(p), DA_TERCA);
     assert.ok(ligado(p, 'gerais-val-outra'));
     assert.equal(id(p, 'gerais-val-data').value, '2026-10-19');
-    assert.equal(erroGerais(p).textContent, PASSOU);
+    assert.deepEqual(errosGerais(p), [PASSOU]);
+    assert.equal(texto(p, 'completar'), 'A data de validade já passou — toque aqui para escolher de novo', 'o aviso já na abertura');
     assert.ok(ligado(p, 'gerais-pag-pix'));
   });
 });

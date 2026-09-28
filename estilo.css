@@ -138,6 +138,19 @@ a { color: inherit; }
 .conflito { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--alerta-fundo); color: var(--alerta-escrita); }
 .conflito p { margin: 0; font-weight: 700; }
 .erro-item { margin: 10px 0 0; font-weight: 700; color: var(--alerta-escrita); }
+/* erro de uma condição: logo abaixo dela, colado ao campo */
+.erro-campo { margin: 6px 0 0; }
+.campo-curto[aria-invalid='true'], .campo-medio[aria-invalid='true'], .campo-data[aria-invalid='true'], .campo-obs[aria-invalid='true'] {
+  border-color: var(--alerta);
+}
+/* a condição até onde o aviso do rodapé levou: fica marcada até ser resolvida */
+.destaque {
+  border-radius: 12px; background: var(--aviso-fundo);
+  box-shadow: 0 0 0 4px var(--aviso-fundo), 0 0 0 6px var(--marca);
+  animation: chamar 0.8s ease-in-out 2;
+}
+@keyframes chamar { 50% { box-shadow: 0 0 0 4px var(--aviso-fundo), 0 0 0 10px var(--marca); } }
+@media (prefers-reduced-motion: reduce) { .destaque { animation: none; } }
 
 /* botões */
 .botao {
@@ -166,6 +179,12 @@ a { color: inherit; }
 }
 .rodape-dentro { max-width: 608px; margin: 0 auto; }
 .mensagem { margin: 0 0 8px; padding: 8px 10px; border-radius: 10px; background: var(--aviso-fundo); color: var(--aviso-texto); font-weight: 700; }
+/* "Preços enviados. Falta o prazo do boleto — toque aqui para completar" */
+.completar {
+  display: block; width: 100%; min-height: 48px; margin: 0 0 8px; padding: 10px 12px; border-radius: 10px; cursor: pointer;
+  border: 2px solid var(--marca); background: var(--aviso-fundo); color: var(--aviso-texto);
+  font-weight: 700; font-size: 15px; text-align: left; overflow-wrap: anywhere;
+}
 .status { margin: 0 0 8px; font-size: 15px; }
 .status:empty { display: none; }
 .status.pendente { color: var(--alerta-escrita); font-weight: 700; }

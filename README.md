@@ -20,7 +20,7 @@ npm install
 npm test
 ```
 
-Rodam no jsdom com o banco simulado (nada sai para a internet): leitura do preço, conversão e conta ao vivo, rascunho no aparelho, envio com `envio_id`, `rev` por item, conflito, avisos, "devagar", estados da cotação, reabrir depois do fechamento (envio pendente refeito e aviso do que não chegou), prévia, nota do Ivan, marca e horário de recebimento.
+Rodam no jsdom com o banco simulado (nada sai para a internet): leitura do preço, conversão e conta ao vivo, rascunho no aparelho, envio com `envio_id`, `rev` por item, conflito, avisos, "devagar", condições incompletas que nunca seguram os preços (o erro fica junto do campo e o aviso do rodapé leva até ele — `tests/condicoes.test.js`, cenário do teste real de 28/09), estados da cotação, reabrir depois do fechamento (envio pendente refeito e aviso do que não chegou), prévia, nota do Ivan, marca e horário de recebimento.
 
 ## Preencher o `config.js` (na hora de publicar)
 

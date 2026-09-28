@@ -759,16 +759,19 @@
     };
   }
 
-  /** Condições gravadas → formulário. Texto que não é uma das opções (ex.: digitado pelo Ivan) fica como "outro". */
+  /**
+   * Condições gravadas → formulário. Texto que não é uma das opções (ex.: digitado pelo Ivan) fica como "outro" —
+   * inclusive "boleto" sem os dias (gravado antes ou digitado pelo Ivan): volta igual, sem virar pendência sozinho.
+   */
   function formDosGerais(g, opcoes) {
     const f = geraisVazioForm();
     if (!g) return f;
     const pg = g.pagamento;
     if (pg) {
-      const m = /^boleto(?: (\d+) dias?)?$/.exec(pg);
+      const m = /^boleto (\d+) dias?$/.exec(pg);
       if (m) {
         f.pag = 'boleto';
-        f.pag_dias = m[1] || '';
+        f.pag_dias = m[1];
       } else if (pg === 'Pix') {
         f.pag = 'pix';
       } else if (pg === 'à vista') {
@@ -805,17 +808,23 @@
     return f;
   }
 
-  /** Formulário → as 6 condições (a gravação troca as 6 de uma vez). Devolve { gerais, erro }. */
-  function geraisDoForm(f, hoje) {
+  /**
+   * Formulário → as 6 condições, com todos os problemas na ordem da tela: { gerais, erros } (gerais = null se há
+   * algum; cada erro = { campo, motivo }). Opção escolhida sem o valor que ela pede é incompleta (motivo "sem_…":
+   * boleto sem os dias, "Mínimo R$" vazio, "outra data" sem data, entrega em outra data sem dizer quando) — antes
+   * ela ia vazia, em silêncio. As condições só vão inteiras e certas; os preços nunca esperam por elas.
+   */
+  function analisarGerais(f, hoje) {
     const g = Object.assign({}, GERAIS_VAZIAS);
-    const falha = function (campo) { return { gerais: null, erro: { campo: campo } }; };
+    const erros = [];
+    const falha = function (campo, motivo) { erros.push({ campo: campo, motivo: motivo }); };
     if (f.pag === 'boleto') {
-      if (preenchido(f.pag_dias)) {
-        const d = lerNumero(f.pag_dias);
-        if (d === null || d < 1 || d > 365 || Math.floor(d) !== d) return falha('pagamento');
-        g.pagamento = 'boleto ' + d + (d === 1 ? ' dia' : ' dias');
+      if (!preenchido(f.pag_dias)) {
+        falha('pagamento', 'sem_dias');
       } else {
-        g.pagamento = 'boleto';
+        const d = lerNumero(f.pag_dias);
+        if (d === null || d < 1 || d > 365 || Math.floor(d) !== d) falha('pagamento', 'dias');
+        else g.pagamento = 'boleto ' + d + (d === 1 ? ' dia' : ' dias');
       }
     } else if (f.pag === 'pix') {
       g.pagamento = 'Pix';
@@ -824,31 +833,79 @@
     } else if (f.pag === 'outro') {
       g.pagamento = limparTexto(f.pag_outro);
     }
-    if (g.pagamento !== null && (tamanho(g.pagamento) > 200 || CONTROLE.test(g.pagamento))) return falha('pagamento');
+    if (g.pagamento !== null && (tamanho(g.pagamento) > 200 || CONTROLE.test(g.pagamento))) falha('pagamento', 'texto');
     if (f.validade) {
-      if (!dataValida(f.validade)) return falha('validade');
-      if (hoje && (f.validade < hoje || f.validade > somarDias(hoje, 366))) return falha('validade');
-      g.validade = f.validade;
+      if (!dataValida(f.validade)) falha('validade', 'data');
+      else if (hoje && f.validade < hoje) falha('validade', 'passou');
+      else if (hoje && f.validade > somarDias(hoje, 366)) falha('validade', 'data');
+      else g.validade = f.validade;
+    } else if (f.validade_outra) {
+      falha('validade', 'sem_data');
     }
     if (f.minimo === 'sem') {
       g.pedido_minimo = 0;
-    } else if (f.minimo === 'valor' && preenchido(f.minimo_valor)) {
-      g.pedido_minimo = lerValorGeral(f.minimo_valor);
-      if (g.pedido_minimo === null) return falha('pedido_minimo');
+    } else if (f.minimo === 'valor') {
+      if (!preenchido(f.minimo_valor)) {
+        falha('pedido_minimo', 'sem_valor');
+      } else {
+        g.pedido_minimo = lerValorGeral(f.minimo_valor);
+        if (g.pedido_minimo === null) falha('pedido_minimo', 'valor');
+      }
     }
     if (preenchido(f.frete)) {
       g.frete = lerValorGeral(f.frete);
-      if (g.frete === null) return falha('frete');
+      if (g.frete === null) falha('frete', 'valor');
     }
     if (f.entrega === 'seguinte') g.entrega = 'dia seguinte';
     else if (f.entrega === '2dias') g.entrega = '2 dias';
     else if (f.entrega === 'retirar') g.entrega = 'retirar na loja';
-    else if (f.entrega === 'outra') g.entrega = limparTexto(f.entrega_outra);
-    if (g.entrega !== null && (tamanho(g.entrega) > 200 || CONTROLE.test(g.entrega))) return falha('entrega');
+    else if (f.entrega === 'outra') {
+      g.entrega = limparTexto(f.entrega_outra);
+      if (g.entrega === null) falha('entrega', 'sem_texto');
+    }
+    if (g.entrega !== null && (tamanho(g.entrega) > 200 || CONTROLE.test(g.entrega))) falha('entrega', 'texto');
     g.observacao = limparTexto(f.observacao);
-    if (g.observacao !== null && (tamanho(g.observacao) > 1000 || CONTROLE_OBS.test(g.observacao))) return falha('observacao');
-    return { gerais: g, erro: null };
+    if (g.observacao !== null && (tamanho(g.observacao) > 1000 || CONTROLE_OBS.test(g.observacao))) falha('observacao', 'texto');
+    return { gerais: erros.length ? null : g, erros: erros };
   }
+
+  /** Formulário → as 6 condições (a gravação troca as 6 de uma vez). Devolve { gerais, erro } (erro = o primeiro). */
+  function geraisDoForm(f, hoje) {
+    const x = analisarGerais(f, hoje);
+    return { gerais: x.gerais, erro: x.erros.length ? x.erros[0] : null };
+  }
+
+  /** O que falta numa condição, junto do campo (campo:motivo de analisarGerais). */
+  const TEXTOS_ERRO_CONDICAO = {
+    'pagamento:sem_dias': 'Falta o prazo do boleto: quantos dias? (ex.: 28)',
+    'pagamento:dias': 'Prazo do boleto: número de dias, de 1 a 365.',
+    'pagamento:texto': 'O texto do pagamento é longo demais (até 200 letras).',
+    'validade:sem_data': 'Falta a data: escolha no calendário ou toque numa das datas.',
+    'validade:passou': TEXTO_VALIDADE_PASSOU,
+    'validade:data': 'A validade precisa ser uma data de hoje até daqui a um ano.',
+    'pedido_minimo:sem_valor': 'Falta o valor do pedido mínimo (ou toque em Sem mínimo).',
+    'pedido_minimo:valor': 'Não entendi o pedido mínimo. Use só números (ex.: 300,00).',
+    'frete:valor': 'Não entendi o frete. Use só números (ex.: 30,00; sem frete: 0).',
+    'entrega:sem_texto': 'Falta dizer quando entrega (ex.: quinta de manhã).',
+    'entrega:texto': 'O texto da entrega é longo demais (até 200 letras).',
+    'observacao:texto': 'A observação é longa demais (até 1.000 letras).'
+  };
+
+  /** O aviso curto do rodapé: [o que falta, o que o toque faz] ("… — toque aqui para completar"). */
+  const AVISOS_CONDICAO = {
+    'pagamento:sem_dias': ['Falta o prazo do boleto', 'completar'],
+    'pagamento:dias': ['O prazo do boleto não está certo', 'corrigir'],
+    'pagamento:texto': ['O texto do pagamento é longo demais', 'corrigir'],
+    'validade:sem_data': ['Falta a data de validade', 'completar'],
+    'validade:passou': ['A data de validade já passou', 'escolher de novo'],
+    'validade:data': ['A data de validade não vale', 'corrigir'],
+    'pedido_minimo:sem_valor': ['Falta o valor do pedido mínimo', 'completar'],
+    'pedido_minimo:valor': ['Não entendi o pedido mínimo', 'corrigir'],
+    'frete:valor': ['Não entendi o frete', 'corrigir'],
+    'entrega:sem_texto': ['Falta dizer quando entrega', 'completar'],
+    'entrega:texto': ['O texto da entrega é longo demais', 'corrigir'],
+    'observacao:texto': ['A observação é longa demais', 'corrigir']
+  };
 
   function mesmosGerais(a, b) {
     const x = a || GERAIS_VAZIAS;
@@ -1541,8 +1598,9 @@
       } else {
         g.form = f;
         g.rascunho = { rev: rg.rev };
-        // a validade escolhida ontem (o "hoje" da noite) já passou: o aviso aparece de cara, não só no ENVIAR
-        if (validadePassou(f, g.hoje)) g.mostrarErro = true;
+        // condições guardadas que não podem ir como estão (a validade de ontem, o boleto sem os dias de quem fechou a
+        // aba depois de mandar os preços): o aviso aparece de cara, não só no próximo ENVIAR
+        if (!x.gerais) g.mostrarErro = true;
       }
     }
     esta.gerais = g;
@@ -2010,49 +2068,82 @@
     return el('button', { type: 'button', classe: 'opcao', 'aria-pressed': 'false', id: id, texto: texto });
   }
 
+  // condições com erro próprio, na ordem da tela; o id do erro é "gerais-erro-<sufixo>"
+  const CAMPOS_CONDICAO = ['pagamento', 'validade', 'pedido_minimo', 'frete', 'entrega', 'observacao'];
+  const SUFIXO_ERRO = { pagamento: 'pagamento', validade: 'validade', pedido_minimo: 'minimo', frete: 'frete', entrega: 'entrega', observacao: 'observacao' };
+
+  function erroDoCampo(campo) {
+    return el('p', { classe: 'erro-item erro-campo', id: 'gerais-erro-' + SUFIXO_ERRO[campo], role: 'alert', hidden: true });
+  }
+
   function montarGerais(g) {
     const v = {};
     g.view = v;
+    v.grupos = {};     // o que fica destacado quando o aviso leva até a condição
+    v.entradas = {};   // o campo onde se digita o que falta (null: escolhe-se num botão)
+    v.erros = {};      // o erro de cada condição, logo abaixo dela
+    for (let i = 0; i < CAMPOS_CONDICAO.length; i++) v.erros[CAMPOS_CONDICAO[i]] = erroDoCampo(CAMPOS_CONDICAO[i]);
     v.raiz = el('section', { classe: 'cartao gerais', id: 'gerais', 'aria-labelledby': 'gerais-titulo' });
     const cab = el('div', { classe: 'item-cabecalho' });
     cab.appendChild(el('h2', { classe: 'item-nome', id: 'gerais-titulo', texto: 'Condições (valem para todos os itens)' }));
     v.situacao = el('span', { classe: 'situacao', id: 'gerais-situacao' });
     cab.appendChild(v.situacao);
     v.raiz.appendChild(cab);
+    // recusa do banco que não é de um campo só: no alto do cartão, onde se chega rolando
+    v.erro = el('p', { classe: 'erro-item', id: 'gerais-erro', role: 'alert', hidden: true });
+    v.raiz.appendChild(v.erro);
 
     // pagamento
     v.pagBoleto = botaoOpcao('gerais-pag-boleto', 'Boleto');
-    v.pagDias = campoTexto('gerais-pag-dias', { inputmode: 'numeric', classe: 'campo-curto', 'aria-label': 'Dias do boleto' });
+    v.pagDias = campoTexto('gerais-pag-dias', {
+      inputmode: 'numeric', classe: 'campo-curto', 'aria-label': 'Dias do boleto', 'aria-describedby': 'gerais-erro-pagamento'
+    });
     v.pagPix = botaoOpcao('gerais-pag-pix', 'Pix');
     v.pagVista = botaoOpcao('gerais-pag-vista', 'À vista');
     v.pagOutro = botaoOpcao('gerais-pag-outro', '');
     v.raiz.appendChild(el('p', { classe: 'rotulo', id: 'gerais-pag-rotulo', texto: 'Pagamento' }));
-    v.raiz.appendChild(el('div', { classe: 'opcoes', role: 'group', 'aria-labelledby': 'gerais-pag-rotulo' }, [
+    v.grupos.pagamento = el('div', { classe: 'opcoes', id: 'gerais-pag-opcoes', role: 'group', 'aria-labelledby': 'gerais-pag-rotulo' }, [
       el('span', { classe: 'opcao-emb' }, [v.pagBoleto, v.pagDias, el('span', { classe: 'sufixo', texto: 'dias' })]),
       v.pagPix, v.pagVista, v.pagOutro
-    ]));
+    ]);
+    v.entradas.pagamento = v.pagDias;
+    v.raiz.appendChild(v.grupos.pagamento);
+    v.raiz.appendChild(v.erros.pagamento);
 
     // validade, com as datas absolutas que o banco manda (refeitas se o dia virar com a página aberta)
     v.raiz.appendChild(el('p', { classe: 'rotulo', id: 'gerais-val-rotulo', texto: 'Preço válido até' }));
-    v.grupoVal = el('div', { classe: 'opcoes', role: 'group', 'aria-labelledby': 'gerais-val-rotulo' });
+    v.grupoVal = el('div', { classe: 'opcoes', id: 'gerais-val-opcoes', role: 'group', 'aria-labelledby': 'gerais-val-rotulo' });
     v.valBotoes = [];
     v.valOutra = botaoOpcao('gerais-val-outra', 'outra data');
-    v.valData = el('input', { type: 'date', classe: 'campo-data', id: 'gerais-val-data', 'aria-label': 'Outra data de validade' });
+    v.valData = el('input', {
+      type: 'date', classe: 'campo-data', id: 'gerais-val-data', 'aria-label': 'Outra data de validade', 'aria-describedby': 'gerais-erro-validade'
+    });
     v.valOutraCaixa = el('span', { classe: 'opcao-emb' }, [v.valOutra, v.valData]);
     v.grupoVal.appendChild(v.valOutraCaixa);
     montarBotoesValidade(g);
+    v.grupos.validade = v.grupoVal;
+    v.entradas.validade = null;   // a data se escolhe num botão ou no calendário: o aviso só rola até lá
     v.raiz.appendChild(v.grupoVal);
+    v.raiz.appendChild(v.erros.validade);
 
     // pedido mínimo e frete
     v.minSem = botaoOpcao('gerais-min-sem', 'Sem mínimo');
     v.minValorBt = botaoOpcao('gerais-min-valor-bt', 'Mínimo R$');
-    v.minValor = campoTexto('gerais-min-valor', { inputmode: 'decimal', classe: 'campo-curto', 'aria-label': 'Pedido mínimo (R$)' });
+    v.minValor = campoTexto('gerais-min-valor', {
+      inputmode: 'decimal', classe: 'campo-curto', 'aria-label': 'Pedido mínimo (R$)', 'aria-describedby': 'gerais-erro-minimo'
+    });
     v.raiz.appendChild(el('p', { classe: 'rotulo', id: 'gerais-min-rotulo', texto: 'Pedido mínimo' }));
-    v.raiz.appendChild(el('div', { classe: 'opcoes', role: 'group', 'aria-labelledby': 'gerais-min-rotulo' }, [
+    v.grupos.pedido_minimo = el('div', { classe: 'opcoes', id: 'gerais-min-opcoes', role: 'group', 'aria-labelledby': 'gerais-min-rotulo' }, [
       v.minSem, el('span', { classe: 'opcao-emb' }, [v.minValorBt, v.minValor])
-    ]));
-    v.frete = campoTexto('gerais-frete', { inputmode: 'decimal', classe: 'campo-curto' });
-    v.raiz.appendChild(el('p', { classe: 'linha-campo' }, [el('label', { for: 'gerais-frete', texto: 'Frete R$' }), v.frete]));
+    ]);
+    v.entradas.pedido_minimo = v.minValor;
+    v.raiz.appendChild(v.grupos.pedido_minimo);
+    v.raiz.appendChild(v.erros.pedido_minimo);
+    v.frete = campoTexto('gerais-frete', { inputmode: 'decimal', classe: 'campo-curto', 'aria-describedby': 'gerais-erro-frete' });
+    v.grupos.frete = el('p', { classe: 'linha-campo', id: 'gerais-frete-linha' }, [el('label', { for: 'gerais-frete', texto: 'Frete R$' }), v.frete]);
+    v.entradas.frete = v.frete;
+    v.raiz.appendChild(v.grupos.frete);
+    v.raiz.appendChild(v.erros.frete);
 
     // horário em que a Spazio recebe mercadoria (ajuste Foozi 5): constante do config.js, fora da mensagem
     const recebe = textoRecebimento();
@@ -2062,22 +2153,28 @@
     v.entSeguinte = botaoOpcao('gerais-ent-seguinte', 'Dia seguinte');
     v.ent2 = botaoOpcao('gerais-ent-2dias', '2 dias');
     v.entOutraBt = botaoOpcao('gerais-ent-outra-bt', 'Outra data');
-    v.entOutra = campoTexto('gerais-ent-outra', { maxlength: '200', classe: 'campo-medio', 'aria-label': 'Outra data de entrega' });
+    v.entOutra = campoTexto('gerais-ent-outra', {
+      maxlength: '200', classe: 'campo-medio', 'aria-label': 'Outra data de entrega', 'aria-describedby': 'gerais-erro-entrega'
+    });
     v.entRetirar = botaoOpcao('gerais-ent-retirar', 'Retirar na loja');
     v.raiz.appendChild(el('p', { classe: 'rotulo', id: 'gerais-ent-rotulo', texto: 'Se eu fechar, entrego em' }));
-    v.raiz.appendChild(el('div', { classe: 'opcoes', role: 'group', 'aria-labelledby': 'gerais-ent-rotulo' }, [
+    v.grupos.entrega = el('div', { classe: 'opcoes', id: 'gerais-ent-opcoes', role: 'group', 'aria-labelledby': 'gerais-ent-rotulo' }, [
       v.entSeguinte, v.ent2, el('span', { classe: 'opcao-emb' }, [v.entOutraBt, v.entOutra]), v.entRetirar
-    ]));
+    ]);
+    v.entradas.entrega = v.entOutra;
+    v.raiz.appendChild(v.grupos.entrega);
+    v.raiz.appendChild(v.erros.entrega);
 
     // observação
-    v.obs = el('textarea', { id: 'gerais-obs', classe: 'campo-obs', rows: '3', maxlength: '1000' });
+    v.obs = el('textarea', { id: 'gerais-obs', classe: 'campo-obs', rows: '3', maxlength: '1000', 'aria-describedby': 'gerais-erro-observacao' });
     v.raiz.appendChild(el('label', { classe: 'rotulo', for: 'gerais-obs', texto: 'Observação' }));
+    v.grupos.observacao = v.obs;
+    v.entradas.observacao = v.obs;
     v.raiz.appendChild(v.obs);
+    v.raiz.appendChild(v.erros.observacao);
 
     v.conflito = el('div', { classe: 'conflito', hidden: true });
-    v.erro = el('p', { classe: 'erro-item', role: 'alert', hidden: true });
     v.raiz.appendChild(v.conflito);
-    v.raiz.appendChild(v.erro);
 
     // eventos
     v.pagBoleto.addEventListener('click', function () { g.form.pag = 'boleto'; editouGerais(g); });
@@ -2200,33 +2297,81 @@
     }
     v.conflito.hidden = !g.conflito;
 
-    let erro = null;
-    if (g.dataInvalida) erro = 'Não entendi a data de validade.';
-    if (!erro && g.rascunho && g.mostrarErro) {
-      const x = geraisDoForm(f, g.hoje);
-      if (x.erro) erro = x.erro.campo === 'validade' && validadePassou(f, g.hoje) ? TEXTO_VALIDADE_PASSOU : textoErroGerais(x.erro.campo);
+    // erros: cada um logo abaixo da sua condição (a recusa genérica do banco, no alto do cartão)
+    const erros = errosDasCondicoes(g);
+    let algum = !!erros.geral;
+    for (let i = 0; i < CAMPOS_CONDICAO.length; i++) {
+      const campo = CAMPOS_CONDICAO[i];
+      const t = erros.campos[campo] || '';
+      const n = v.erros[campo];
+      if (n.textContent !== t) n.textContent = t;
+      n.hidden = !t;
+      if (t) algum = true;
+      const entrada = v.entradas[campo];
+      if (entrada) {
+        if (t) entrada.setAttribute('aria-invalid', 'true');
+        else entrada.removeAttribute('aria-invalid');
+      }
+      // o destaque (o aviso do rodapé levou até aqui) fica até a condição ser resolvida
+      if (!t && g.destaque === campo) g.destaque = null;
+      v.grupos[campo].classList.toggle('destaque', !!t && g.destaque === campo);
     }
-    if (!erro && g.erroServidor) {
-      if (g.erroServidor === 'texto_invalido') erro = 'Algum texto das condições é inválido ou longo demais.';
-      // o banco confere a validade com o dia de agora (D30): se ela já passou, a culpada é ela, não "algum valor"
-      else if (validadePassou(f, diaLocalAgora(P) || g.hoje)) erro = TEXTO_VALIDADE_PASSOU;
-      else erro = 'Algum valor das condições está fora do esperado. Confira.';
-    }
-    if (v.erro.textContent !== (erro || '')) v.erro.textContent = erro || '';
-    v.erro.hidden = !erro;
-    v.raiz.classList.toggle('com-erro', !!erro);
+    if (v.erro.textContent !== (erros.geral || '')) v.erro.textContent = erros.geral || '';
+    v.erro.hidden = !erros.geral;
+    v.raiz.classList.toggle('com-erro', algum);
 
     v.situacao.textContent = g.rascunho ? 'Ainda não enviado' : (g.servidor && !mesmosGerais(g.servidor, GERAIS_VAZIAS) ? 'Recebido' : '');
     v.situacao.className = 'situacao' + (g.rascunho ? ' pendente' : (v.situacao.textContent ? ' recebido' : ''));
   }
 
-  function textoErroGerais(campo) {
-    if (campo === 'pagamento') return 'Confira o pagamento (boleto: número de dias de 1 a 365).';
-    if (campo === 'validade') return 'A validade precisa ser uma data de hoje em diante.';
-    if (campo === 'pedido_minimo') return 'Não entendi o pedido mínimo.';
-    if (campo === 'frete') return 'Não entendi o frete.';
-    if (campo === 'entrega') return 'O texto da entrega é longo demais (até 200 letras).';
-    return 'A observação é longa demais (até 1.000 letras).';
+  /**
+   * Os erros das condições a mostrar: { campos: {campo: texto}, geral }. Os locais aparecem depois de um ENVIAR
+   * (mostrarErro); a data que não deu para ler aparece na hora; a recusa do banco, quando não há erro local.
+   */
+  function errosDasCondicoes(g) {
+    const r = { campos: {}, geral: null };
+    const f = g.form;
+    if (g.dataInvalida) r.campos.validade = 'Não entendi a data de validade.';
+    if (g.rascunho && g.mostrarErro) {
+      const erros = analisarGerais(f, g.hoje).erros;
+      for (let i = 0; i < erros.length; i++) {
+        const e = erros[i];
+        if (!r.campos[e.campo]) r.campos[e.campo] = TEXTOS_ERRO_CONDICAO[e.campo + ':' + e.motivo] || 'Confira esta condição.';
+      }
+    }
+    if (g.erroServidor && !Object.keys(r.campos).length) {
+      if (g.erroServidor === 'texto_invalido') r.geral = 'Algum texto das condições é inválido ou longo demais.';
+      // o banco confere a validade com o dia de agora (D30): se ela já passou, a culpada é ela, não "algum valor"
+      else if (validadePassou(f, diaLocalAgora(P) || g.hoje)) r.campos.validade = TEXTO_VALIDADE_PASSOU;
+      else r.geral = 'Algum valor das condições está fora do esperado. Confira.';
+    }
+    return r;
+  }
+
+  /** O primeiro problema das condições que o vendedor precisa resolver (depois de um ENVIAR), ou null. */
+  function problemaDasCondicoes(g) {
+    if (!g || !g.rascunho || !g.mostrarErro || g.conflito) return null;
+    return geraisDoForm(g.form, g.hoje).erro;
+  }
+
+  /**
+   * Leva o vendedor à condição que falta: rola até o campo (ou até as opções, quando se escolhe num botão), destaca
+   * e, com focar (toque no aviso), põe o cursor nele. Devolve false se não há o que completar.
+   */
+  function irParaCondicao(esta, focar) {
+    const g = esta && esta.gerais;
+    const e = problemaDasCondicoes(g);
+    if (!e || !g.view) return false;
+    const v = g.view;
+    g.destaque = e.campo;
+    sincronizarGerais(g);
+    // o campo de digitar só quando o que falta é digitado nele (o "outro" pagamento veio do banco, sem campo)
+    const entrada = e.campo === 'pagamento' && e.motivo === 'texto' ? null : v.entradas[e.campo];
+    rolarAte(entrada || v.grupos[e.campo]);
+    if (focar && entrada && !entrada.disabled) {
+      try { entrada.focus({ preventScroll: true }); } catch (x) { entrada.focus(); }
+    }
+    return true;
   }
 
   function editouGerais(g) {
@@ -2256,6 +2401,9 @@
   function descartarRascunhoGerais(g) {
     g.rascunho = null;
     g.conflito = false;
+    // chegaram (ou o vendedor ficou com as atuais): os erros da próxima edição só depois de outro ENVIAR
+    g.mostrarErro = false;
+    g.destaque = null;
     apagarChave(P.storage, chaveGerais(P.h));
   }
 
@@ -2270,14 +2418,43 @@
     return n;
   }
 
+  /** Todos os preços preenchidos já estão no banco (nenhum item à espera, nenhum envio sem confirmação)? */
+  function precosNoBanco(esta) {
+    if (esta.envio) return false;
+    let algum = false;
+    for (let i = 0; i < esta.itens.length; i++) {
+      const ei = esta.itens[i];
+      if (ei.rascunho) return false;
+      const estado = ei.servidor && ei.servidor.estado;
+      if (estado === 'tem' || estado === 'nao_tem') algum = true;
+    }
+    return algum;
+  }
+
+  /** "Preços enviados. Falta o prazo do boleto — toque aqui para completar" (ou null: nada a completar). */
+  function avisoCondicao(esta) {
+    const g = esta.gerais;
+    const e = problemaDasCondicoes(g);
+    if (!e) return null;
+    let a = AVISOS_CONDICAO[e.campo + ':' + e.motivo] || ['Falta completar as condições', 'completar'];
+    if (e.campo === 'validade' && e.motivo === 'sem_data' && g.dataInvalida) a = ['Não entendi a data de validade', 'corrigir'];
+    return (precosNoBanco(esta) ? 'Preços enviados. ' : '') + a[0] + ' — toque aqui para ' + a[1];
+  }
+
   function atualizarGeral() {
     const esta = P;
     if (!esta || esta.vista !== 'form') return;
     const total = esta.itens.length;
     esta.viewContador.textContent = preenchidos(esta) + ' de ' + total + ' preenchidos';
     const pend = !esta.previa && pendente(esta);
+    // só falta o vendedor completar as condições: nada a mandar nem a confirmar, então nem faixa vermelha ("tentar
+    // de novo" não resolve) nem "Ainda não enviado" (os preços chegaram) — quem fala é o aviso das condições.
+    // Depois do fechamento não há mais o que completar: a faixa volta (o que não foi ficou só no celular)
+    const m = montarEnvio(esta.itens, esta.gerais);
+    const soCondicao = pend && !esta.fechado && !esta.envio && !m.p_itens.length && m.p_gerais === null &&
+      !m.invalidos.length && m.geraisInvalidas && !conflitosAbertos(esta);
     const faixa = porId('faixa-pendente');
-    faixa.hidden = !pend;
+    faixa.hidden = !pend || soCondicao;
     faixa.disabled = esta.enviando || esta.aguardando;
     const status = porId('status');
     let st = '';
@@ -2286,7 +2463,7 @@
       st = 'Enviando…';
     } else if (esta.aguardando) {
       st = 'Aguardando para tentar de novo…';
-    } else if (pend) {
+    } else if (pend && !soCondicao) {
       st = 'Ainda não enviado.' + (esta.falhaRede ? ' Não consegui confirmar o envio. ' + TEXTO_WHATSAPP : '');
       classe += ' pendente';
     } else if (esta.recebidoEm) {
@@ -2295,6 +2472,10 @@
     }
     status.textContent = st;
     status.className = classe;
+    const completar = porId('completar');
+    const aviso = esta.previa || esta.fechado || esta.enviando || esta.aguardando ? null : avisoCondicao(esta);
+    if (completar.textContent !== (aviso || '')) completar.textContent = aviso || '';
+    completar.hidden = !aviso;
     porId('pronto').hidden = pend || !esta.recebidoEm || esta.enviando;
     const msg = porId('mensagem');
     msg.textContent = esta.mensagem || '';
@@ -2388,13 +2569,12 @@
 
   // ---------- ENVIAR
 
+  /** Itens que não dá para mandar como estão (as condições têm o aviso próprio, no rodapé). */
   function textoFaltaCompletar(m) {
-    const partes = [];
-    if (m.invalidos.length) partes.push((m.invalidos.length === 1 ? 'o item ' : 'os itens ') + m.invalidos.join(', '));
-    if (m.geraisInvalidas) partes.push('as condições');
-    return 'Falta completar ' + partes.join(' e ') + '.';
+    return 'Falta completar ' + (m.invalidos.length === 1 ? 'o item ' : 'os itens ') + juntarComE(m.invalidos) + '.';
   }
 
+  /** Depois de um ENVIAR, o que não pôde ir mostra o erro junto do campo. */
   function marcarErros(esta, m) {
     for (let i = 0; i < esta.itens.length; i++) {
       const ei = esta.itens[i];
@@ -2407,10 +2587,15 @@
       esta.gerais.mostrarErro = true;
       sincronizarGerais(esta.gerais);
     }
-    let primeiro = null;
-    if (m.invalidos.length) primeiro = porId('item-' + m.invalidos[0]);
-    else if (m.geraisInvalidas) primeiro = porId('gerais');
-    rolarAte(primeiro);
+  }
+
+  /**
+   * Leva a tela ao primeiro problema, na ordem da tela: o item que não pôde ir neste ENVIAR; senão, a condição que
+   * falta (conferida na hora: o vendedor pode ter completado com o envio no ar).
+   */
+  function irAoProblema(esta, m) {
+    if (m.invalidos.length) rolarAte(porId('item-' + m.invalidos[0]));
+    else irParaCondicao(esta, false);
   }
 
   function conflitosAbertos(esta) {
@@ -2440,16 +2625,19 @@
       atualizarGeral();
       return Promise.resolve();
     }
+    // condição incompleta ou inválida nunca segura os preços: os itens válidos vão, as condições só inteiras e certas
+    // (achado do teste real de 28/09: boleto sem os dias travava tudo e o campo ficava fora da tela)
     const m = montarEnvio(esta.itens, esta.gerais);
-    if (m.invalidos.length || m.geraisInvalidas) marcarErros(esta, m);
+    marcarErros(esta, m);
     if (!m.p_itens.length && !m.p_gerais) {
-      if (m.invalidos.length || m.geraisInvalidas) esta.mensagem = textoFaltaCompletar(m);
+      if (m.invalidos.length) esta.mensagem = textoFaltaCompletar(m);
       else if (conflitosAbertos(esta)) esta.mensagem = 'Escolha, nos itens marcados, qual valor fica.';
-      else if (esta.envio) {
+      else if (!m.geraisInvalidas && esta.envio) {
         esta.envio = null;
         apagarChave(esta.storage, chaveEnvio(esta.h));
       }
       atualizarGeral();
+      irAoProblema(esta, m);
       return Promise.resolve();
     }
     if (!esta.envio) esta.envio = { envio_id: novoUuid(), numeros: [], gerais: false };
@@ -2481,11 +2669,13 @@
         esta.envio = null;
         apagarChave(esta.storage, chaveEnvio(esta.h));
         esta.recebidoEm = horaRecebido(j.recebido_em) || esta.recebidoEm;
-        if (m.invalidos.length || m.geraisInvalidas) esta.mensagem = textoFaltaCompletar(m);
+        if (m.invalidos.length) esta.mensagem = textoFaltaCompletar(m);
         else if (conflitosAbertos(esta)) esta.mensagem = 'Alguns itens foram alterados depois que você abriu. Escolha qual valor fica.';
         atualizarGeral();
         // reenvio de um envio antigo que já tinha chegado: o que foi editado depois ainda não foi — manda agora
         if (j.reenvio === true && !op.seguimento && haEnviavel(esta)) return enviar({ seguimento: true });
+        // chegou o que podia ir: a tela vai ao que ainda falta (o aviso do rodapé diz o quê e leva de novo)
+        irAoProblema(esta, m);
         return undefined;
       }
       return tratarRecusa(esta, j, op);
@@ -2691,6 +2881,9 @@
   function ligar() {
     porId('enviar').addEventListener('click', function () { enviar(); });
     porId('faixa-pendente').addEventListener('click', function () { enviar(); });
+    porId('completar').addEventListener('click', function () {
+      if (P && P.vista === 'form' && !somenteLeitura()) irParaCondicao(P, true);
+    });
     window.addEventListener('hashchange', function () { iniciar(); });
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) return;
